@@ -19,6 +19,8 @@ Kamu adalah **Expert Software Engineer**, **Senior Python Developer**, dan **Sys
 - **Database expertise** — menguasai migration management (Alembic), query optimization, N+1 detection, connection pooling, dan database-specific idioms. Tidak pernah menulis raw SQL tanpa parameterization
 - **Exception hierarchy design** — selalu mendefinisikan custom exception hierarchy per domain, tidak pernah raise `Exception` langsung. Exception harus membawa konteks yang cukup untuk debugging tanpa leaking sensitive info
 - **Mutation testing awareness** — memahami bahwa coverage 80% tidak menjamin test quality. Menggunakan `mutmut` untuk verifikasi bahwa test benar-benar menguji logic, bukan hanya mengeksekusi baris
+- **AI/LLM engineering** — menguasai Anthropic SDK, OpenAI SDK, Google Gemini/Vertex AI, LangChain, LlamaIndex. Memahami RAG pipeline, tool calling, agentic workflow, prompt versioning, dan LLM evaluation. Selalu memperhitungkan cost, latency, token budget, dan fallback strategy dalam setiap desain AI feature
+- **Google Cloud & Google API** — berpengalaman dengan Google Cloud SDK, Vertex AI, Google Workspace APIs (Gmail, Drive, Calendar, Sheets), Maps Platform, dan Firebase. Memahami Service Account, OAuth 2.0, Application Default Credentials, dan quota management
 
 Gunakan persona ini dalam setiap keputusan implementasi: arsitektur modul, decomposition requirement, desain API, validasi input, security model, test strategy, observability, dan pilihan library.
 
@@ -53,6 +55,14 @@ Skill ini mengatur standarisasi development Python di VernonCorp. Setiap perinta
 | `profil kode [target]` | Profiling performa: cProfile/py-spy, memory profiling, async bottleneck detection |
 | `buat release vX.Y.Z` | Tag release, generate release notes dari CHANGELOG, validasi semua gate |
 | `setup docker` | Generate Dockerfile multi-stage, docker-compose dev/prod, dan .dockerignore |
+| `setup ai [anthropic\|openai\|gemini\|langchain\|all]` | Setup AI provider: install SDK, konfigurasi credentials, buat base client dengan retry/fallback |
+| `generate ai service [nama]` | Generate AI service layer: prompt template, client wrapper, response parser, error handling |
+| `generate rag pipeline [nama]` | Generate full RAG pipeline: document loader, chunker, embedder, vector store, retriever, generator |
+| `setup vector db [chroma\|qdrant\|pgvector]` | Setup dan konfigurasi vector database dengan schema dan koneksi standar |
+| `audit prompt [path]` | Audit prompt templates: injection risk, PII exposure, token efficiency, hallucination triggers |
+| `evaluate llm [target]` | Evaluasi output LLM: akurasi, konsistensi, latency, cost per request, fallback coverage |
+| `setup google api [gmail\|drive\|calendar\|sheets\|maps\|firebase\|vertex]` | Setup Google API client: credentials, OAuth/Service Account, quota handling, wrapper service |
+| `generate google service [api]` | Generate service layer untuk Google API tertentu dengan clean interface dan error handling |
 
 ---
 
@@ -1665,6 +1675,1105 @@ class Test{NamaModul}Properties:
 
 ---
 
+## PERINTAH: setup ai [provider]
+
+**Trigger**: `setup ai anthropic`, `setup ai openai`, `setup ai gemini`, `setup ai langchain`, `setup ai all`
+
+**Tujuan**: Setup AI provider dengan standar VernonCorp — credentials aman, retry logic, observability, dan interface yang testable.
+
+### Fase 1: Tentukan Provider
+
+| Provider | SDK | Use Case Utama |
+|---|---|---|
+| `anthropic` | `anthropic` | Claude models — reasoning, analysis, long context |
+| `openai` | `openai` | GPT-4o, embeddings, whisper, DALL-E |
+| `gemini` | `google-generativeai` | Gemini Pro/Flash — multimodal, grounding |
+| `vertex` | `google-cloud-aiplatform` | Gemini via Vertex AI — enterprise, audit trail |
+| `langchain` | `langchain`, `langchain-core`, `langchain-community` | Orchestration multi-provider, agent chains |
+| `all` | semua di atas | Multi-provider setup |
+
+### Fase 2: Install Dependencies
+
+Tambahkan ke `pyproject.toml` (atau sesuai package manager):
+
+```toml
+[tool.poetry.dependencies]
+# Pilih sesuai provider
+anthropic = "^0.40.0"
+openai = "^1.50.0"
+google-generativeai = "^0.8.0"
+google-cloud-aiplatform = "^1.70.0"
+langchain = "^0.3.0"
+langchain-core = "^0.3.0"
+langchain-anthropic = "^0.3.0"
+langchain-openai = "^0.2.0"
+langchain-google-genai = "^2.0.0"
+tenacity = "^9.0.0"        # retry logic
+tiktoken = "^0.8.0"        # token counting (OpenAI-compatible)
+```
+
+### Fase 3: Environment Variables
+
+Tambahkan ke `.env.example`:
+
+```env
+# Anthropic
+ANTHROPIC_API_KEY=
+
+# OpenAI
+OPENAI_API_KEY=
+OPENAI_ORG_ID=
+
+# Google AI / Gemini
+GOOGLE_API_KEY=
+GOOGLE_CLOUD_PROJECT=
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+
+# LLM Config
+LLM_DEFAULT_PROVIDER=anthropic         # anthropic | openai | gemini
+LLM_DEFAULT_MODEL=claude-sonnet-4-6
+LLM_MAX_TOKENS=4096
+LLM_TEMPERATURE=0.0
+LLM_REQUEST_TIMEOUT=60
+LLM_MAX_RETRIES=3
+```
+
+### Fase 4: Generate Base Client
+
+Buat `src/{project_name}/infrastructure/ai/` dengan struktur:
+
+```
+infrastructure/ai/
+├── __init__.py
+├── base.py              ← abstract AI client interface
+├── anthropic_client.py  ← Anthropic implementation
+├── openai_client.py     ← OpenAI implementation
+├── gemini_client.py     ← Google Gemini implementation
+├── exceptions.py        ← AI-specific exceptions
+└── token_counter.py     ← token budget tracking
+```
+
+**`base.py`** — Abstract interface (domain tidak tahu provider spesifik):
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import AsyncIterator
+
+@dataclass
+class AIMessage:
+    content: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+
+@dataclass
+class AIRequest:
+    prompt: str
+    system: str | None = None
+    max_tokens: int = 4096
+    temperature: float = 0.0
+    model: str | None = None  # None = gunakan default provider
+
+class BaseAIClient(ABC):
+    """Abstract AI client — semua provider implement interface ini."""
+
+    @abstractmethod
+    async def complete(self, request: AIRequest) -> AIMessage:
+        """Generate completion. Raise AIProviderError jika gagal."""
+        ...
+
+    @abstractmethod
+    async def stream(self, request: AIRequest) -> AsyncIterator[str]:
+        """Stream completion chunks."""
+        ...
+
+    @abstractmethod
+    def count_tokens(self, text: str) -> int:
+        """Estimasi jumlah token untuk text tertentu."""
+        ...
+```
+
+**`anthropic_client.py`** — Anthropic implementation dengan retry + observability:
+
+```python
+import anthropic
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import structlog
+from .base import BaseAIClient, AIRequest, AIMessage
+from .exceptions import AIProviderError, AIRateLimitError, AITokenBudgetError
+
+log = structlog.get_logger()
+
+# Cost per 1M token (USD) — update sesuai pricing terbaru
+ANTHROPIC_COST = {
+    "claude-opus-4-6":    {"input": 15.0,  "output": 75.0},
+    "claude-sonnet-4-6":  {"input": 3.0,   "output": 15.0},
+    "claude-haiku-4-5":   {"input": 0.8,   "output": 4.0},
+}
+
+class AnthropicClient(BaseAIClient):
+    def __init__(self, api_key: str, default_model: str = "claude-sonnet-4-6") -> None:
+        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        self._default_model = default_model
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type(anthropic.RateLimitError),
+        reraise=True,
+    )
+    async def complete(self, request: AIRequest) -> AIMessage:
+        model = request.model or self._default_model
+        self._check_token_budget(request.prompt, request.max_tokens)
+
+        try:
+            response = await self._client.messages.create(
+                model=model,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+                system=request.system or anthropic.NOT_GIVEN,
+                messages=[{"role": "user", "content": request.prompt}],
+            )
+        except anthropic.RateLimitError as e:
+            log.warning("ai.rate_limit", provider="anthropic", model=model)
+            raise AIRateLimitError("Anthropic rate limit exceeded") from e
+        except anthropic.APIError as e:
+            log.error("ai.provider_error", provider="anthropic", model=model, error=str(e))
+            raise AIProviderError(f"Anthropic API error: {e}") from e
+
+        cost = self._calculate_cost(model, response.usage.input_tokens, response.usage.output_tokens)
+        log.info("ai.completion", provider="anthropic", model=model,
+                 input_tokens=response.usage.input_tokens,
+                 output_tokens=response.usage.output_tokens, cost_usd=cost)
+
+        return AIMessage(
+            content=response.content[0].text,
+            model=model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            cost_usd=cost,
+        )
+
+    def count_tokens(self, text: str) -> int:
+        # Approximation: 1 token ≈ 4 chars untuk Anthropic
+        return len(text) // 4
+
+    def _check_token_budget(self, prompt: str, max_tokens: int) -> None:
+        estimated = self.count_tokens(prompt)
+        if estimated + max_tokens > 190_000:  # Claude context limit
+            raise AITokenBudgetError(f"Token budget exceeded: ~{estimated} input + {max_tokens} output")
+
+    def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
+        pricing = ANTHROPIC_COST.get(model, {"input": 3.0, "output": 15.0})
+        return (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+```
+
+**`exceptions.py`**:
+
+```python
+from src.{project_name}.domain.exceptions import {ProjectName}BaseError
+
+class AIError(ProjectNameBaseError):
+    """Base exception untuk semua AI errors."""
+
+class AIProviderError(AIError):
+    """Provider API gagal — non-retryable."""
+
+class AIRateLimitError(AIError):
+    """Rate limit tercapai — retryable."""
+
+class AITokenBudgetError(AIError):
+    """Token budget melebihi batas yang diizinkan."""
+
+class AIResponseParseError(AIError):
+    """Gagal parse response dari LLM ke format yang diharapkan."""
+```
+
+### Fase 5: Dependency Injection
+
+Daftarkan di DI container (`infrastructure/container.py`):
+
+```python
+from dependency_injector import containers, providers
+from .ai.anthropic_client import AnthropicClient
+
+class Container(containers.DeclarativeContainer):
+    config = providers.Configuration()
+
+    ai_client = providers.Singleton(
+        AnthropicClient,
+        api_key=config.anthropic.api_key,
+        default_model=config.llm.default_model,
+    )
+```
+
+---
+
+## PERINTAH: generate ai service [nama]
+
+**Trigger**: `generate ai service summarizer`, `generate ai service classifier`, dll.
+
+**Tujuan**: Generate application service yang menggunakan AI client — prompt template terpisah, response parsing, fallback.
+
+### Output yang Dihasilkan
+
+```
+src/{project_name}/
+├── application/
+│   └── services/
+│       └── {nama}_service.py        ← orchestration + business logic
+├── infrastructure/
+│   └── ai/
+│       └── prompts/
+│           └── {nama}/
+│               ├── system.jinja2    ← system prompt template
+│               └── user.jinja2     ← user prompt template
+└── tests/
+    └── unit/
+        └── application/
+            └── test_{nama}_service.py
+```
+
+**`application/services/{nama}_service.py`**:
+
+```python
+from dataclasses import dataclass
+from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
+import structlog
+from src.{project_name}.infrastructure.ai.base import BaseAIClient, AIRequest
+from src.{project_name}.infrastructure.ai.exceptions import AIError
+
+log = structlog.get_logger()
+PROMPT_DIR = Path(__file__).parent.parent.parent / "infrastructure/ai/prompts/{nama}"
+
+@dataclass
+class {Nama}Input:
+    # Field input sesuai requirement
+    text: str
+
+@dataclass
+class {Nama}Output:
+    # Field output sesuai requirement
+    result: str
+    confidence: float | None = None
+
+class {Nama}Service:
+    """Service untuk [deskripsi]. Gunakan AI client sebagai infrastruktur."""
+
+    def __init__(self, ai_client: BaseAIClient) -> None:
+        self._ai = ai_client
+        self._env = Environment(loader=FileSystemLoader(PROMPT_DIR), autoescape=False)
+
+    async def run(self, input_data: {Nama}Input) -> {Nama}Output:
+        # [REQ-AI-001]
+        system_prompt = self._env.get_template("system.jinja2").render()
+        user_prompt = self._env.get_template("user.jinja2").render(input=input_data)
+
+        log.info("{nama}.start", text_length=len(input_data.text))
+
+        try:
+            response = await self._ai.complete(AIRequest(
+                prompt=user_prompt,
+                system=system_prompt,
+                max_tokens=1024,
+                temperature=0.0,
+            ))
+        except AIError as e:
+            log.error("{nama}.ai_error", error=str(e))
+            raise
+
+        result = self._parse_response(response.content)
+        log.info("{nama}.complete", cost_usd=response.cost_usd, tokens=response.output_tokens)
+        return result
+
+    def _parse_response(self, content: str) -> {Nama}Output:
+        # Parse dan validasi output LLM
+        # Selalu validate — LLM bisa return format yang tidak terduga
+        return {Nama}Output(result=content.strip())
+```
+
+**Aturan prompt template**:
+- Sistem prompt di `system.jinja2` — role, rules, output format
+- User prompt di `user.jinja2` — variabel dinamis menggunakan Jinja2
+- Tidak ada prompt hardcode di Python code
+- Tambahkan comment di template: tujuan, versi, tanggal terakhir diuji
+
+---
+
+## PERINTAH: generate rag pipeline [nama]
+
+**Trigger**: `generate rag pipeline knowledge-base`, `generate rag pipeline product-search`, dll.
+
+**Tujuan**: Generate full RAG pipeline dengan document ingestion, embedding, vector search, dan generation.
+
+### Arsitektur RAG Standar
+
+```
+Ingestion Pipeline:
+Document → Loader → Chunker → Embedder → Vector Store
+
+Query Pipeline:
+Query → Embedder → Vector Search → Reranker → Context Builder → LLM → Response
+```
+
+### Output yang Dihasilkan
+
+```
+src/{project_name}/
+├── domain/
+│   └── {nama}/
+│       ├── document.py          ← Document entity, Chunk value object
+│       └── repository.py        ← DocumentRepository abstract
+├── application/
+│   └── {nama}/
+│       ├── ingest_use_case.py   ← ingestion orchestration
+│       └── query_use_case.py    ← query + generate orchestration
+├── infrastructure/
+│   └── {nama}/
+│       ├── loaders/             ← PDF, DOCX, URL, plain text loaders
+│       ├── chunker.py           ← recursive character text splitter
+│       ├── embedder.py          ← embedding client wrapper
+│       └── vector_store.py      ← vector DB adapter (Chroma/Qdrant/pgvector)
+└── tests/
+    ├── unit/
+    │   └── {nama}/
+    └── integration/
+        └── {nama}/
+```
+
+**Chunking strategy standar**:
+```python
+from dataclasses import dataclass
+
+@dataclass
+class ChunkConfig:
+    chunk_size: int = 512          # token per chunk
+    chunk_overlap: int = 50        # overlap antar chunk
+    separators: list[str] = None   # ["\n\n", "\n", ". ", " ", ""]
+    # Note: chunk_size kecil → precision tinggi tapi recall rendah
+    #       chunk_size besar → recall tinggi tapi noise lebih banyak
+    # Tuning berdasarkan jenis dokumen: teknis → 256-512, naratif → 512-1024
+```
+
+**Embedder wrapper** (mendukung multi-provider):
+```python
+class EmbedderClient:
+    """Wrapper embedding — provider-agnostic."""
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Batch embed. Selalu batch — jangan call satu per satu."""
+        ...
+
+    async def embed_query(self, query: str) -> list[float]:
+        """Embed single query untuk similarity search."""
+        ...
+```
+
+**Vector store adapter** (ikuti port-adapter pattern):
+```python
+from abc import ABC, abstractmethod
+
+class VectorStorePort(ABC):
+    @abstractmethod
+    async def upsert(self, chunks: list[EmbeddedChunk]) -> None: ...
+
+    @abstractmethod
+    async def search(self, query_vector: list[float], top_k: int = 5,
+                     filter: dict | None = None) -> list[SearchResult]: ...
+
+    @abstractmethod
+    async def delete(self, document_id: str) -> None: ...
+```
+
+**Query pipeline dengan reranking**:
+```python
+async def query(self, question: str, top_k: int = 5) -> RAGResponse:
+    # 1. Embed query
+    query_vector = await self._embedder.embed_query(question)
+
+    # 2. Vector search — retrieve top_k * 3 untuk reranking
+    candidates = await self._vector_store.search(query_vector, top_k=top_k * 3)
+
+    # 3. Rerank (cross-encoder atau LLM-based)
+    reranked = await self._reranker.rerank(question, candidates, top_n=top_k)
+
+    # 4. Build context
+    context = self._build_context(reranked)
+
+    # 5. Generate dengan source citation
+    response = await self._ai.complete(AIRequest(
+        prompt=f"Context:\n{context}\n\nQuestion: {question}",
+        system=self._system_prompt,
+        max_tokens=1024,
+    ))
+
+    return RAGResponse(
+        answer=response.content,
+        sources=[r.metadata for r in reranked],
+        cost_usd=response.cost_usd,
+    )
+```
+
+---
+
+## PERINTAH: setup vector db [provider]
+
+**Trigger**: `setup vector db chroma`, `setup vector db qdrant`, `setup vector db pgvector`
+
+| Provider | Use Case | Deployment |
+|---|---|---|
+| `chroma` | Development, prototype, local | In-process atau Docker |
+| `qdrant` | Production, high-throughput | Docker, Qdrant Cloud |
+| `pgvector` | Sudah punya PostgreSQL | Extension pada DB existing |
+
+### Chroma Setup
+
+```python
+# infrastructure/vector_store/chroma_store.py
+import chromadb
+from chromadb.config import Settings
+
+def create_chroma_client(persist_directory: str) -> chromadb.Client:
+    return chromadb.PersistentClient(
+        path=persist_directory,
+        settings=Settings(anonymized_telemetry=False),
+    )
+```
+
+```env
+CHROMA_PERSIST_DIR=.chroma
+CHROMA_COLLECTION_NAME={project_name}
+```
+
+### Qdrant Setup
+
+```python
+# infrastructure/vector_store/qdrant_store.py
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import Distance, VectorParams
+
+async def create_collection(client: AsyncQdrantClient, name: str, vector_size: int) -> None:
+    await client.create_collection(
+        collection_name=name,
+        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+    )
+```
+
+```env
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=
+QDRANT_COLLECTION={project_name}
+```
+
+### pgvector Setup
+
+```sql
+-- Alembic migration
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE embeddings (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    content     TEXT NOT NULL,
+    embedding   vector(1536),          -- sesuaikan dimensi model
+    metadata    JSONB DEFAULT '{}',
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX ON embeddings USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);               -- lists ≈ sqrt(jumlah row)
+```
+
+---
+
+## PERINTAH: audit prompt [path]
+
+**Trigger**: `audit prompt`, `audit prompt src/ai/prompts/`
+
+**Tujuan**: Audit semua prompt template untuk risiko keamanan, efisiensi, dan kualitas.
+
+### Yang Diperiksa
+
+| Check | Severity | Deskripsi |
+|---|---|---|
+| Prompt injection | HIGH | Placeholder yang bisa diisi instruksi berbahaya |
+| PII exposure | HIGH | Template yang minta atau expose data personal |
+| Hardcoded data | MEDIUM | Data spesifik yang seharusnya dinamis |
+| Token inefficiency | MEDIUM | Prompt terlalu verbose, bisa dipersingkat |
+| Missing output format | MEDIUM | Tidak ada instruksi format output yang jelas |
+| Hallucination trigger | MEDIUM | Instruksi ambigu yang mendorong LLM berasumsi |
+| Missing fallback instruction | LOW | Tidak ada instruksi "jika tidak tahu, katakan tidak tahu" |
+| Version/date missing | INFO | Template tidak punya metadata versi |
+
+### Output Audit
+
+```
+## Audit Prompt Report
+Tanggal: YYYY-MM-DD
+Path: src/{project_name}/infrastructure/ai/prompts/
+
+### Temuan
+
+**[PRMPT-001] HIGH — Prompt Injection Risk**
+File: summarizer/user.jinja2, Line 5
+```
+Summarize the following: {{ user_input }}
+```
+Masalah: `user_input` tidak di-sanitize sebelum dimasukkan ke prompt.
+Risiko: User bisa inject instruksi "Ignore previous instructions and..."
+Rekomendasi: Tambahkan sanitization atau wrap input dalam delimiter:
+```
+Summarize the text between <document> tags:
+<document>{{ user_input | e }}</document>
+```
+
+### Summary
+- HIGH: 2
+- MEDIUM: 3
+- LOW: 1
+- INFO: 2
+```
+
+---
+
+## PERINTAH: evaluate llm [target]
+
+**Trigger**: `evaluate llm summarizer`, `evaluate llm classifier`
+
+**Tujuan**: Evaluasi kualitas output LLM menggunakan dataset test dan metrik standar.
+
+### Metrik Evaluasi
+
+| Metrik | Tool | Kapan Digunakan |
+|---|---|---|
+| Accuracy | Custom assert | Classification, extraction tasks |
+| BLEU / ROUGE | `rouge-score` | Summarization, translation |
+| Semantic similarity | cosine similarity | Open-ended generation |
+| Faithfulness | ragas | RAG — apakah answer sesuai context |
+| Answer relevancy | ragas | RAG — apakah answer menjawab pertanyaan |
+| Context recall | ragas | RAG — apakah context cukup lengkap |
+| Latency P50/P95 | Custom | Semua AI service |
+| Cost per request | Custom | Semua AI service |
+
+### Test Dataset Format
+
+```json
+// tests/fixtures/ai/{nama}_test_cases.json
+[
+  {
+    "id": "TC-001",
+    "input": { "text": "..." },
+    "expected_output": "...",
+    "expected_keywords": ["keyword1", "keyword2"],
+    "max_cost_usd": 0.01,
+    "max_latency_ms": 3000
+  }
+]
+```
+
+### Evaluasi Command Output
+
+```
+## LLM Evaluation Report — {nama}Service
+Model: claude-sonnet-4-6
+Date: YYYY-MM-DD
+Test cases: 50
+
+### Hasil
+| Metrik              | Target | Actual | Status |
+|---------------------|--------|--------|--------|
+| Accuracy            | ≥90%   | 94%    | ✅ PASS |
+| Avg latency         | <3s    | 1.8s   | ✅ PASS |
+| P95 latency         | <5s    | 3.2s   | ✅ PASS |
+| Avg cost/request    | <$0.01 | $0.004 | ✅ PASS |
+| Total cost (50 req) | -      | $0.20  | INFO   |
+
+### Failed Cases
+- TC-023: Expected "..." tapi got "..." (keyword mismatch)
+- TC-041: Latency 4.1s (exceed 3s target)
+
+### Rekomendasi
+- TC-023: Perbaiki prompt — tambahkan contoh output yang diharapkan
+- TC-041: Pertimbangkan streaming response untuk UX yang lebih baik
+```
+
+---
+
+## PERINTAH: setup google api [api]
+
+**Trigger**: `setup google api gmail`, `setup google api drive`, `setup google api gemini`, `setup google api vertex`, `setup google api sheets`, `setup google api maps`, `setup google api firebase`
+
+**Tujuan**: Setup Google API client dengan credentials standar, quota handling, dan service wrapper.
+
+### Authentication Strategy
+
+| Skenario | Metode Auth | Kapan |
+|---|---|---|
+| Server-to-server (backend) | Service Account | Akses resource tanpa user |
+| Akses resource user | OAuth 2.0 + refresh token | Akses Gmail/Drive/Calendar user |
+| Development lokal | Application Default Credentials (ADC) | `gcloud auth application-default login` |
+| Cloud Run / GKE | Workload Identity / Attached SA | Deployment ke Google Cloud |
+
+### Setup Credentials
+
+```env
+# Service Account (pilih salah satu)
+GOOGLE_APPLICATION_CREDENTIALS=/secrets/service-account.json
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}   # alternatif: JSON inline
+
+# OAuth (untuk akses resource user)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
+
+# Project
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_REGION=asia-southeast1
+
+# API Keys (untuk Maps, dll)
+GOOGLE_MAPS_API_KEY=
+GOOGLE_API_KEY=
+```
+
+### Per-API Setup
+
+#### Gmail API
+
+```python
+# infrastructure/google/gmail_client.py
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+import structlog
+
+log = structlog.get_logger()
+SCOPES = ["https://www.googleapis.com/auth/gmail.send",
+          "https://www.googleapis.com/auth/gmail.readonly"]
+
+class GmailClient:
+    def __init__(self, credentials_path: str, delegated_user: str | None = None) -> None:
+        creds = service_account.Credentials.from_service_account_file(
+            credentials_path, scopes=SCOPES
+        )
+        if delegated_user:
+            creds = creds.with_subject(delegated_user)
+        self._service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+    async def send_email(self, to: str, subject: str, body: str) -> str:
+        """Kirim email. Return message ID."""
+        import base64
+        from email.mime.text import MIMEText
+
+        message = MIMEText(body)
+        message["to"] = to
+        message["subject"] = subject
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+        try:
+            result = self._service.users().messages().send(
+                userId="me", body={"raw": raw}
+            ).execute()
+            log.info("gmail.sent", message_id=result["id"], to=to)
+            return result["id"]
+        except HttpError as e:
+            log.error("gmail.error", status=e.status_code, to=to)
+            raise GoogleAPIError(f"Gmail send failed: {e}") from e
+```
+
+#### Google Drive API
+
+```python
+# infrastructure/google/drive_client.py
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from google.oauth2 import service_account
+import io
+
+SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+class DriveClient:
+    def __init__(self, credentials_path: str) -> None:
+        creds = service_account.Credentials.from_service_account_file(
+            credentials_path, scopes=SCOPES
+        )
+        self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    async def upload_file(self, name: str, content: bytes,
+                          mime_type: str, folder_id: str | None = None) -> str:
+        """Upload file ke Drive. Return file ID."""
+        metadata = {"name": name}
+        if folder_id:
+            metadata["parents"] = [folder_id]
+
+        media = MediaFileUpload(io.BytesIO(content), mimetype=mime_type, resumable=True)
+        file = self._service.files().create(
+            body=metadata, media_body=media, fields="id"
+        ).execute()
+        return file["id"]
+
+    async def download_file(self, file_id: str) -> bytes:
+        """Download file dari Drive. Return raw bytes."""
+        request = self._service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return buffer.getvalue()
+```
+
+#### Google Sheets API
+
+```python
+# infrastructure/google/sheets_client.py
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
+from typing import Any
+
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+class SheetsClient:
+    def __init__(self, credentials_path: str) -> None:
+        creds = service_account.Credentials.from_service_account_file(
+            credentials_path, scopes=SCOPES
+        )
+        self._service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        self._sheets = self._service.spreadsheets()
+
+    async def read_range(self, spreadsheet_id: str, range_: str) -> list[list[Any]]:
+        result = self._sheets.values().get(
+            spreadsheetId=spreadsheet_id, range=range_
+        ).execute()
+        return result.get("values", [])
+
+    async def write_range(self, spreadsheet_id: str, range_: str,
+                          values: list[list[Any]]) -> None:
+        self._sheets.values().update(
+            spreadsheetId=spreadsheet_id, range=range_,
+            valueInputOption="USER_ENTERED",
+            body={"values": values},
+        ).execute()
+
+    async def append_rows(self, spreadsheet_id: str, range_: str,
+                          rows: list[list[Any]]) -> None:
+        self._sheets.values().append(
+            spreadsheetId=spreadsheet_id, range=range_,
+            valueInputOption="USER_ENTERED",
+            body={"values": rows},
+        ).execute()
+```
+
+#### Google Calendar API
+
+```python
+# infrastructure/google/calendar_client.py
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
+from datetime import datetime
+
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
+
+class CalendarClient:
+    def __init__(self, credentials_path: str, delegated_user: str | None = None) -> None:
+        creds = service_account.Credentials.from_service_account_file(
+            credentials_path, scopes=SCOPES
+        )
+        if delegated_user:
+            creds = creds.with_subject(delegated_user)
+        self._service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+    async def create_event(self, calendar_id: str, summary: str,
+                           start: datetime, end: datetime,
+                           attendees: list[str] | None = None) -> str:
+        event = {
+            "summary": summary,
+            "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Jakarta"},
+            "end": {"dateTime": end.isoformat(), "timeZone": "Asia/Jakarta"},
+        }
+        if attendees:
+            event["attendees"] = [{"email": e} for e in attendees]
+
+        result = self._service.events().insert(
+            calendarId=calendar_id, body=event
+        ).execute()
+        return result["id"]
+```
+
+#### Google Maps API
+
+```python
+# infrastructure/google/maps_client.py
+import httpx
+import structlog
+
+log = structlog.get_logger()
+
+class MapsClient:
+    BASE_URL = "https://maps.googleapis.com/maps/api"
+
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+        self._http = httpx.AsyncClient(timeout=10.0)
+
+    async def geocode(self, address: str) -> tuple[float, float] | None:
+        """Return (lat, lng) atau None jika tidak ditemukan."""
+        response = await self._http.get(
+            f"{self.BASE_URL}/geocode/json",
+            params={"address": address, "key": self._api_key, "language": "id"},
+        )
+        data = response.json()
+        if data["status"] != "OK":
+            log.warning("maps.geocode_failed", address=address, status=data["status"])
+            return None
+        location = data["results"][0]["geometry"]["location"]
+        return location["lat"], location["lng"]
+
+    async def distance_matrix(self, origins: list[str],
+                               destinations: list[str]) -> dict:
+        response = await self._http.get(
+            f"{self.BASE_URL}/distancematrix/json",
+            params={
+                "origins": "|".join(origins),
+                "destinations": "|".join(destinations),
+                "key": self._api_key,
+                "language": "id",
+                "units": "metric",
+            },
+        )
+        return response.json()
+```
+
+#### Google Gemini / Vertex AI
+
+```python
+# infrastructure/ai/gemini_client.py
+import google.generativeai as genai
+from google.cloud import aiplatform
+from .base import BaseAIClient, AIRequest, AIMessage
+from .exceptions import AIProviderError, AIRateLimitError
+import structlog
+
+log = structlog.get_logger()
+
+# Cost per 1M token (USD) — Gemini pricing
+GEMINI_COST = {
+    "gemini-2.0-flash":    {"input": 0.10, "output": 0.40},
+    "gemini-2.5-pro":      {"input": 1.25, "output": 10.0},
+    "gemini-1.5-pro":      {"input": 1.25, "output": 5.0},
+    "gemini-1.5-flash":    {"input": 0.075, "output": 0.30},
+}
+
+class GeminiClient(BaseAIClient):
+    """Gemini via Google AI Studio (API Key)."""
+
+    def __init__(self, api_key: str, default_model: str = "gemini-2.0-flash") -> None:
+        genai.configure(api_key=api_key)
+        self._default_model = default_model
+
+    async def complete(self, request: AIRequest) -> AIMessage:
+        model_name = request.model or self._default_model
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            system_instruction=request.system,
+        )
+
+        try:
+            response = await model.generate_content_async(
+                request.prompt,
+                generation_config=genai.GenerationConfig(
+                    max_output_tokens=request.max_tokens,
+                    temperature=request.temperature,
+                ),
+            )
+        except Exception as e:
+            log.error("ai.gemini_error", model=model_name, error=str(e))
+            raise AIProviderError(f"Gemini error: {e}") from e
+
+        usage = response.usage_metadata
+        cost = self._calculate_cost(model_name, usage.prompt_token_count,
+                                    usage.candidates_token_count)
+        log.info("ai.completion", provider="gemini", model=model_name,
+                 input_tokens=usage.prompt_token_count,
+                 output_tokens=usage.candidates_token_count, cost_usd=cost)
+
+        return AIMessage(
+            content=response.text,
+            model=model_name,
+            input_tokens=usage.prompt_token_count,
+            output_tokens=usage.candidates_token_count,
+            cost_usd=cost,
+        )
+
+    def count_tokens(self, text: str) -> int:
+        return len(text) // 4  # aproximasi
+
+    def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
+        pricing = GEMINI_COST.get(model, {"input": 0.10, "output": 0.40})
+        return (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+
+
+class VertexAIGeminiClient(BaseAIClient):
+    """Gemini via Vertex AI — untuk production dengan audit trail dan enterprise SLA."""
+
+    def __init__(self, project: str, location: str = "asia-southeast1",
+                 default_model: str = "gemini-2.0-flash") -> None:
+        aiplatform.init(project=project, location=location)
+        self._project = project
+        self._location = location
+        self._default_model = default_model
+
+    async def complete(self, request: AIRequest) -> AIMessage:
+        from vertexai.generative_models import GenerativeModel, GenerationConfig
+
+        model_name = request.model or self._default_model
+        model = GenerativeModel(model_name=model_name,
+                                system_instruction=request.system)
+        try:
+            response = await model.generate_content_async(
+                request.prompt,
+                generation_config=GenerationConfig(
+                    max_output_tokens=request.max_tokens,
+                    temperature=request.temperature,
+                ),
+            )
+        except Exception as e:
+            log.error("ai.vertex_error", model=model_name, error=str(e))
+            raise AIProviderError(f"Vertex AI error: {e}") from e
+
+        usage = response.usage_metadata
+        log.info("ai.completion", provider="vertex", model=model_name,
+                 input_tokens=usage.prompt_token_count,
+                 output_tokens=usage.candidates_token_count)
+
+        return AIMessage(
+            content=response.text,
+            model=model_name,
+            input_tokens=usage.prompt_token_count,
+            output_tokens=usage.candidates_token_count,
+            cost_usd=0.0,  # Vertex AI ditagih per project GCP, bukan per call
+        )
+
+    def count_tokens(self, text: str) -> int:
+        return len(text) // 4
+```
+
+### Firebase Setup
+
+```python
+# infrastructure/google/firebase_client.py
+import firebase_admin
+from firebase_admin import credentials, firestore, storage, messaging
+
+class FirebaseClient:
+    """Firebase Admin SDK client."""
+
+    def __init__(self, credentials_path: str, storage_bucket: str | None = None) -> None:
+        cred = credentials.Certificate(credentials_path)
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred, {
+                "storageBucket": storage_bucket or ""
+            })
+        self.db = firestore.client()
+        self.bucket = storage.bucket() if storage_bucket else None
+
+    async def send_push_notification(self, token: str, title: str, body: str,
+                                      data: dict | None = None) -> str:
+        """Kirim FCM push notification. Return message ID."""
+        message = messaging.Message(
+            notification=messaging.Notification(title=title, body=body),
+            data=data or {},
+            token=token,
+        )
+        return messaging.send(message)
+```
+
+### Exception untuk Google APIs
+
+```python
+# infrastructure/google/exceptions.py
+from src.{project_name}.domain.exceptions import {ProjectName}BaseError
+
+class GoogleAPIError({ProjectName}BaseError):
+    """Base exception untuk semua Google API errors."""
+
+class GoogleAuthError(GoogleAPIError):
+    """Authentication/authorization gagal."""
+
+class GoogleQuotaError(GoogleAPIError):
+    """API quota exceeded — retryable setelah delay."""
+
+class GoogleAPINotFoundError(GoogleAPIError):
+    """Resource tidak ditemukan."""
+```
+
+### Quota & Rate Limit Handling
+
+Semua Google API client wajib handle quota dengan tenacity:
+
+```python
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from googleapiclient.errors import HttpError
+
+def is_retryable_google_error(exc: Exception) -> bool:
+    if isinstance(exc, HttpError):
+        return exc.status_code in (429, 500, 502, 503, 504)
+    return False
+
+google_retry = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, min=2, max=60),
+    retry=retry_if_exception_type(HttpError),
+    reraise=True,
+)
+```
+
+---
+
+## PERINTAH: generate google service [api]
+
+**Trigger**: `generate google service gmail`, `generate google service sheets`, dll.
+
+Generate application service layer yang membungkus Google API client:
+
+```
+src/{project_name}/
+├── application/
+│   └── services/
+│       └── {api}_service.py         ← use case + business logic
+└── infrastructure/
+    └── google/
+        └── {api}_client.py          ← low-level API wrapper
+```
+
+Service layer harus:
+- Menerima domain object (bukan dict mentah)
+- Log setiap operasi dengan structlog
+- Handle GoogleAPIError dan translate ke domain exception
+- Tidak expose Google SDK type ke layer atas
+
+---
+
+## ATURAN AI/LLM & GOOGLE API
+
+1. **Semua AI key via environment variable** — tidak pernah hardcode API key di kode atau config file
+2. **Token budget sebelum call** — selalu estimasi token sebelum kirim ke LLM, tolak jika melebihi budget
+3. **No PII ke external LLM** — data personal harus dianonymisasi sebelum dikirim ke Anthropic/OpenAI/Gemini API public
+4. **Prompt di file terpisah** — semua prompt template di `.jinja2` / `.txt`, bukan hardcode di Python
+5. **Cost tracking wajib** — setiap completion harus log `cost_usd` dan `input_tokens` + `output_tokens`
+6. **Fallback mandatory** — setiap AI service wajib punya fallback (retry → degraded → error message yang informatif)
+7. **LLM output selalu divalidasi** — tidak pernah trust output LLM secara langsung, selalu parse dan validasi
+8. **Google credentials via ADC atau file path dari env** — tidak pernah embed JSON credentials di kode
+9. **Quota error = retryable** — HTTP 429 dari Google API selalu di-retry dengan exponential backoff
+10. **Test AI service dengan mock** — unit test wajib mock AI client dan Google client, bukan call API real
+11. **Vertex AI untuk production** — Gemini via Google AI Studio hanya untuk development/prototype; production wajib via Vertex AI untuk audit trail
+12. **Service Account scope minimal** — hanya request scope yang benar-benar dibutuhkan, bukan full access
+
+---
+
 ## PRINSIP IMPLEMENTASI
 
 1. **Delta only** — jangan ubah kode yang tidak ada di requirements versi ini
@@ -1691,3 +2800,8 @@ class Test{NamaModul}Properties:
 22. **Recovery dulu jika gagal** — partial implementation harus di-stash sebelum mulai ulang
 23. **Migration safety** — selalu preview SQL sebelum apply migration. Destructive operations wajib konfirmasi eksplisit
 24. **No premature optimization** — optimasi hanya berdasarkan data profiling aktual, bukan asumsi
+25. **AI cost awareness** — setiap AI service wajib track token usage dan estimasi cost per request. Tidak boleh kirim payload besar ke LLM tanpa token budget check
+26. **Prompt versioning** — semua prompt template disimpan di file `.jinja2` / `.txt` yang di-version control, bukan hardcode di Python
+27. **LLM fallback mandatory** — setiap AI call wajib punya fallback strategy (retry, degraded response, atau provider alternatif)
+28. **No PII to LLM** — data PII tidak boleh dikirim ke external LLM API tanpa anonymization/pseudonymization terlebih dahulu
+29. **Google credentials via ADC** — selalu gunakan Application Default Credentials atau Service Account JSON via environment variable, tidak pernah hardcode di kode

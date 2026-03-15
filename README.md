@@ -64,6 +64,22 @@ inisiasi project
 | `generate dokumentasi` | Auto-generate API docs dari docstrings dan type hints |
 | `buat release vX.Y.Z` | Tag release, generate release notes dari CHANGELOG, validasi semua gate |
 
+### AI & LLM
+| Perintah | Deskripsi |
+|----------|-----------|
+| `setup ai [anthropic\|openai\|gemini\|langchain\|all]` | Setup AI provider: install SDK, konfigurasi credentials, buat base client dengan retry/fallback |
+| `generate ai service [nama]` | Generate AI service layer: prompt template, client wrapper, response parser, error handling |
+| `generate rag pipeline [nama]` | Generate full RAG pipeline: document loader, chunker, embedder, vector store, retriever, generator |
+| `setup vector db [chroma\|qdrant\|pgvector]` | Setup dan konfigurasi vector database dengan schema dan koneksi standar |
+| `audit prompt [path]` | Audit prompt templates: injection risk, PII exposure, token efficiency, hallucination triggers |
+| `evaluate llm [target]` | Evaluasi output LLM: akurasi, konsistensi, latency, cost per request, fallback coverage |
+
+### Google API
+| Perintah | Deskripsi |
+|----------|-----------|
+| `setup google api [gmail\|drive\|calendar\|sheets\|maps\|firebase\|vertex]` | Setup Google API client: credentials, OAuth/Service Account, quota handling, wrapper service |
+| `generate google service [api]` | Generate service layer untuk Google API tertentu dengan clean interface dan error handling |
+
 ### Konfigurasi & Infrastructure
 | Perintah | Deskripsi |
 |----------|-----------|
@@ -174,6 +190,9 @@ project/
 | **Logging** | structlog (structured, correlation ID, business event markers) |
 | **Container** | Docker multi-stage, docker-compose |
 | **CI/CD** | GitHub Actions, GitLab CI |
+| **AI/LLM** | Anthropic SDK, OpenAI SDK, Google Gemini, LangChain, LlamaIndex |
+| **Vector DB** | Chroma, Qdrant, pgvector |
+| **Google APIs** | Gmail, Drive, Calendar, Sheets, Maps, Firebase, Vertex AI |
 
 ---
 
@@ -190,6 +209,8 @@ AI yang menggunakan skill ini berperan sebagai **Expert Software Engineer**, **S
 - Testing mastery (pytest, mutation testing, property-based testing)
 - Structured observability (structlog, correlation ID)
 - Layer boundary enforcement (import-linter)
+- **AI/LLM engineering** — Anthropic SDK, OpenAI SDK, Google Gemini/Vertex AI, LangChain, RAG pipeline, prompt engineering, LLM evaluation, cost tracking
+- **Google Cloud & Google APIs** — Service Account, OAuth 2.0, Gmail, Drive, Calendar, Sheets, Maps, Firebase, Vertex AI, quota management
 
 ---
 
