@@ -33,6 +33,7 @@ inisiasi project
 
 ## Perintah yang Tersedia
 
+### Versi & Development
 | Perintah | Deskripsi |
 |----------|-----------|
 | `inisiasi project` | Setup struktur requirements dan project standar VernonCorp Python |
@@ -41,18 +42,34 @@ inisiasi project
 | `dry-run versi vX.Y.Z` | Preview perubahan tanpa mengeksekusi |
 | `rollback ke versi vX.Y.Z` | Rollback implementasi ke versi sebelumnya |
 | `status versi` | Tampilkan versi saat ini dan versi yang tersedia |
+
+### Audit & Kualitas
+| Perintah | Deskripsi |
+|----------|-----------|
 | `audit kode` | Scan kualitas kode: ruff, mypy, bandit, coverage, dead code |
 | `audit requirement vX.Y.Z` | Cek konsistensi antara .md, .yaml, dan kode — report gap/mismatch |
-| `jalankan test [vX.Y.Z]` | Jalankan pytest dengan coverage report |
+| `jalankan test [vX.Y.Z]` | Jalankan pytest dengan coverage report untuk versi tertentu atau semua |
+| `profil kode [target]` | Profiling performa: cProfile/py-spy, memory profiling, async bottleneck detection |
+| `refaktor modul [nama]` | Analisa dan refaktor modul: pecah class besar, extract service, perbaiki coupling |
+
+### Database
+| Perintah | Deskripsi |
+|----------|-----------|
+| `migrasi database [upgrade\|downgrade\|status]` | Kelola Alembic migration: generate, apply, revert, atau tampilkan status |
+| `seed database [dev\|test]` | Generate dan jalankan seed data untuk environment tertentu |
+
+### Dokumentasi & Release
+| Perintah | Deskripsi |
+|----------|-----------|
 | `generate dokumentasi` | Auto-generate API docs dari docstrings dan type hints |
-| `setup environment [dev\|staging\|prod]` | Konfigurasi .env, config files, dan environment settings |
+| `buat release vX.Y.Z` | Tag release, generate release notes dari CHANGELOG, validasi semua gate |
+
+### Konfigurasi & Infrastructure
+| Perintah | Deskripsi |
+|----------|-----------|
+| `setup environment [dev\|staging\|prod]` | Konfigurasi .env, config files, dan environment-specific settings |
 | `setup ci/cd [github\|gitlab]` | Generate pipeline config: lint, type check, security scan, test, build |
 | `setup pre-commit` | Install dan konfigurasi pre-commit hooks: ruff, mypy, bandit, secrets scan |
-| `migrasi database [upgrade\|downgrade\|status]` | Kelola Alembic migration |
-| `seed database [dev\|test]` | Generate dan jalankan seed data untuk environment tertentu |
-| `refaktor modul [nama]` | Analisa dan refaktor modul: pecah class besar, extract service, perbaiki coupling |
-| `profil kode [target]` | Profiling performa: cProfile/py-spy, memory profiling, async bottleneck detection |
-| `buat release vX.Y.Z` | Tag release, generate release notes dari CHANGELOG, validasi semua gate |
 | `setup docker` | Generate Dockerfile multi-stage, docker-compose dev/prod, dan .dockerignore |
 
 ---
@@ -73,7 +90,7 @@ Tulis requirements di docs/requirements/vX.Y.Z/
   ├── validations/      ← aturan validasi input/data
   ├── api/              ← deskripsi endpoint (jika ada)
   ├── events/           ← domain events dan handlers
-  ├── background-jobs/  ← background tasks (jika ada)
+  ├── background-jobs/  ← background tasks (jika ada queue)
   └── migrations/       ← perubahan schema database
       │
       ▼
@@ -153,8 +170,8 @@ project/
 | **Linting** | ruff (formatter + linter) |
 | **Type Check** | mypy strict mode |
 | **Security Scan** | bandit, detect-secrets |
-| **Testing** | pytest, Hypothesis (property-based) |
-| **Logging** | structlog |
+| **Testing** | pytest, Hypothesis (property-based), mutmut (mutation testing) |
+| **Logging** | structlog (structured, correlation ID, business event markers) |
 | **Container** | Docker multi-stage, docker-compose |
 | **CI/CD** | GitHub Actions, GitLab CI |
 
@@ -164,13 +181,15 @@ project/
 
 AI yang menggunakan skill ini berperan sebagai **Expert Software Engineer**, **Senior Python Developer**, dan **System Analyst** dengan pengalaman **20+ tahun**, menguasai:
 
-- Clean Architecture & Domain-Driven Design
+- Clean Architecture & Domain-Driven Design (aggregate, entity, value object, repository)
 - Async/await, GIL, CPython internals
 - SOLID, DRY, KISS, YAGNI design principles
-- Security-aware development (OWASP Top 10)
-- Performance profiling & optimization
-- Testing mastery (pytest, mutation testing)
+- Type safety (mypy strict), exception hierarchy design
+- Security-aware development (OWASP Top 10, bandit, detect-secrets)
+- Performance profiling (cProfile, py-spy, memory optimization)
+- Testing mastery (pytest, mutation testing, property-based testing)
 - Structured observability (structlog, correlation ID)
+- Layer boundary enforcement (import-linter)
 
 ---
 
@@ -185,7 +204,7 @@ Sebelum setiap perintah, AI akan otomatis:
 5. Baca `.project_name` dan `.package_manager`
 6. Cek layer boundaries dengan `import-linter`
 7. Scan secrets dengan `detect-secrets`/`trufflehog`
-8. **Regenerate YAML dari .md** (selalu sinkron)
+8. **Regenerate YAML dari .md** (selalu sinkron — tidak boleh skip)
 
 ---
 
