@@ -4,6 +4,16 @@ Skill Claude Code untuk standarisasi development Python di VernonCorp.
 
 ---
 
+## GitHub Repository
+
+**Repo:** https://github.com/erickmo/Claude-Skill-Python
+
+```bash
+git clone https://github.com/erickmo/Claude-Skill-Python.git
+```
+
+---
+
 ## Cara Penggunaan
 
 Tambahkan skill ini ke project Python kamu:
